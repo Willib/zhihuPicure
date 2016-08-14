@@ -1,6 +1,7 @@
 # -*-coding:utf-8 -*-
 
 import requests
+from requests.adapters import HTTPAdapter
 # import urllib
 # import urllib2
 import cookielib
@@ -56,6 +57,9 @@ def isLogin():
         return False
 
 def login(secret, account):
+    if isLogin():
+        print "已经登录"
+        return
     if re.match(r"^1\d{10}$", account):
         print "手机号登陆\n"
         post_url = 'http://www.zhihu.com/login/phone_num'
@@ -88,32 +92,42 @@ def login(secret, account):
         u = login_code['msg']
     session.cookies.save()
 
-def getPageCode(pageUrl):
-    try:
-        req = session.get(pageUrl, headers=headers)
-        print req.request.headers
-        return req.text
-    except urllib2.URLError, e:
-        if hasattr(e, 'reason'):
-            print u"打开链接失败...", e.reason
-            return None
 
-def getImageUrl(pageUrl):
-    pageCode = getNextPage()
-    if not pageCode:
-        print "打开网页链接失败.."
-        return None
-    pattern = re.compile('data-actualsrc="(.*?)">', re.S)
-    imagesUrl = []
-    for page in pageCode:
-        items = re.findall(pattern, page)
-        for item in items:
-            url = item.replace("\\","")
-            imagesUrl.append(url)
-    return imagesUrl
+def getImageUrl():
+    url = "https://www.zhihu.com/node/QuestionAnswerListV2"
+    method = 'next'
+    size = 10
+    allImageUrl = []
+
+    #循环直至爬完整个问题的回答
+    while(True):
+        print '===========offset: ', size
+        postdata = {
+            'method': 'next',
+            'params': '{"url_token":' + str(46435597) + ',"pagesize": "10",' +\
+                      '"offset":' + str(size) + "}",
+            '_xsrf':get_xsrf(),
+
+        }
+        size += 10
+        page = session.post(url, headers=headers, data=postdata)
+        ret = eval(page.text)
+        listMsg = ret['msg']
+
+        if not listMsg:
+            print "图片URL获取完毕, 页数: ", (size-10)/10
+            return allImageUrl
+        pattern = re.compile('data-actualsrc="(.*?)">', re.S)
+        for pageUrl in listMsg:
+            items = re.findall(pattern, pageUrl)
+            for item in items:      #这里去掉得到的图片URL中的转义字符'\\'
+                imageUrl = item.replace("\\", "")
+                allImageUrl.append(imageUrl)
+
 
 def saveImagesFromUrl(filePath):
-    imagesUrl = getImageUrl(pageUrl)
+    imagesUrl = getImageUrl()
+    print "图片数: ", len(imageUrl)
     if not imagesUrl:
         print 'imagesUrl is empty'
         return
@@ -123,39 +137,19 @@ def saveImagesFromUrl(filePath):
         suffix = image[suffixNum:]
         fileName = filePath + os.sep + str(nameNumber) + suffix
         nameNumber += 1
-        print 'save in: ', fileName
-        response = requests.get(image)
-        contents = response.content
         try:
+            # 设置超时重试次数及超时时间单位秒
+            session.mount(image, HTTPAdapter(max_retries=3))
+            response = session.get(image, timeout=20)
+            contents = response.content
             with open(fileName, "wb") as pic:
                 pic.write(contents)
+
         except IOError:
             print 'Io error'
-
-def getNextPage():
-    url = "https://www.zhihu.com/node/QuestionAnswerListV2"
-    method = 'next'
-    size = 10
-    allPage = []
-    while(True):
-        print '===========offset: ', size
-        postdata = {
-            'method': 'next',
-            'params': '{"url_token":' + str(34243513) + ',"pagesize": "10",' +\
-                      '"offset":' + str(size) + "}",
-            '_xsrf':get_xsrf(),
-
-        }
-        size += 10
-        page = session.post(url, headers=headers ,data=postdata)
-        ret = eval(page.text)
-        list = ret['msg']
-        if not list:
-            return allPage
-        allPage.extend(list)
-        if size == 250:          #最多翻页到250页
-            return allPage
-
+        except requests.exceptions.ConnectionError:
+            print '连接超时,URL: ', image
+    print '图片下载完毕'
 
 login('这是你的知乎密码','这是你的知乎账户')
 saveImagesFromUrl('/Volumes/HDD/Picture')
